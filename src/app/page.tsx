@@ -38,8 +38,8 @@ export default async function HomePage() {
       <div className="absolute inset-0 bg-black/10" />
 
       <div className="relative z-10 min-h-screen flex items-end justify-center px-6 pb-14 sm:pb-16 md:pb-20">
-        <div className="w-full max-w-3xl">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="w-full max-w-5xl">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             {(isAdmin || isVentas) && (
               <Link
                 href="/clientes"
@@ -64,6 +64,15 @@ export default async function HomePage() {
                 className="rounded-[28px] border border-white/20 bg-white/10 backdrop-blur text-white text-center font-semibold text-lg md:text-xl py-5 shadow-[0_10px_40px_rgba(0,0,0,0.35)] transition duration-300 hover:scale-[1.02] hover:bg-white/15"
               >
                 Depósito
+              </Link>
+            )}
+
+            {isAdmin && (
+              <Link
+                href="/administracion"
+                className="rounded-[28px] border border-white/20 bg-white/10 backdrop-blur text-white text-center font-semibold text-lg md:text-xl py-5 shadow-[0_10px_40px_rgba(0,0,0,0.35)] transition duration-300 hover:scale-[1.02] hover:bg-white/15"
+              >
+                Administración
               </Link>
             )}
           </div>
