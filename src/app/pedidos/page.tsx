@@ -625,9 +625,9 @@ export default function PedidosPage() {
                     className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 outline-none text-white"
                   >
                     <option value={0}>0%</option>
-                    <option value={5}>5%</option>
-                    <option value={10}>10%</option>
                     <option value={15}>15%</option>
+                    <option value={23}>23%</option>
+                    <option value={30}>30%</option>
                   </select>
                 </div>
 
