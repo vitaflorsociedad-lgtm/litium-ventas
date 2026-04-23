@@ -55,6 +55,21 @@ const money = (n?: number | null, moneda?: string | null) => {
   return `${moneda || "USD"} ${value.toFixed(2)}`;
 };
 
+function humanizeEmail(email: string | null | undefined) {
+  if (!email) return "";
+  const local = email.split("@")[0].toLowerCase();
+
+  if (local.includes("daniel")) return "Daniel";
+  if (local.includes("victor")) return "Victor";
+  if (local.includes("enrique")) return "Enrique";
+  if (local.includes("jorge")) return "Jorge";
+  if (local.includes("ivana")) return "Ivana";
+  if (local.includes("seba")) return "Sebastiano";
+  if (local.includes("sabado")) return "Sebastiano";
+
+  return local;
+}
+
 export default function PedidosPage() {
   const [busquedaCliente, setBusquedaCliente] = useState("");
   const [clientesEncontrados, setClientesEncontrados] = useState<Cliente[]>([]);
@@ -122,23 +137,65 @@ export default function PedidosPage() {
 
     if (userError || !user) {
       setPerfilActual(null);
+      setMensaje("No se pudo identificar el usuario actual.");
       setCargandoPerfil(false);
       return;
     }
 
-    const { data: perfil, error: perfilError } = await supabase
+    let nombre = "";
+    let email = user.email || "";
+
+    // 1. Intentar por ID
+    const { data: perfilPorId } = await supabase
       .from("profiles")
       .select("nombre, email, role")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
-    if (perfilError) {
-      setPerfilActual(null);
+    if (perfilPorId) {
+      setPerfilActual({
+        nombre: perfilPorId.nombre,
+        email: perfilPorId.email || email,
+        role: perfilPorId.role,
+      });
       setCargandoPerfil(false);
       return;
     }
 
-    setPerfilActual((perfil || null) as PerfilActual | null);
+    // 2. Intentar por email
+    if (email) {
+      const { data: perfilPorEmail } = await supabase
+        .from("profiles")
+        .select("nombre, email, role")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (perfilPorEmail) {
+        setPerfilActual({
+          nombre: perfilPorEmail.nombre,
+          email: perfilPorEmail.email || email,
+          role: perfilPorEmail.role,
+        });
+        setCargandoPerfil(false);
+        return;
+      }
+    }
+
+    // 3. Fallback por email del auth
+    nombre = humanizeEmail(email);
+
+    if (nombre || email) {
+      setPerfilActual({
+        nombre: nombre || null,
+        email: email || null,
+        role: null,
+      });
+      setCargandoPerfil(false);
+      return;
+    }
+
+    setPerfilActual(null);
+    setMensaje("No se pudo identificar el vendedor actual.");
     setCargandoPerfil(false);
   }
 
