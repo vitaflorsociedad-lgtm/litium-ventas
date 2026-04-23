@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Pedido = {
@@ -27,12 +28,9 @@ type Item = {
   cantidad: number;
 };
 
-export default function DepositoDetallePage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const pedidoId = Number(params.id);
+export default function DepositoDetallePage() {
+  const params = useParams();
+  const pedidoId = Number(params?.id);
 
   const [pedido, setPedido] = useState<Pedido | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -43,8 +41,14 @@ export default function DepositoDetallePage({
   const [mensaje, setMensaje] = useState("");
 
   useEffect(() => {
+    if (!pedidoId || Number.isNaN(pedidoId)) {
+      setMensaje("ID de pedido inválido.");
+      setCargando(false);
+      return;
+    }
+
     cargarPedido();
-  }, []);
+  }, [pedidoId]);
 
   useEffect(() => {
     if (!mensaje) return;
