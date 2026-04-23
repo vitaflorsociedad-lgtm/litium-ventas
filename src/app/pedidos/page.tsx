@@ -44,6 +44,12 @@ type ItemCarrito = {
   imagen_url: string | null;
 };
 
+type PerfilActual = {
+  nombre: string | null;
+  email: string | null;
+  role: string | null;
+};
+
 const money = (n?: number | null, moneda?: string | null) => {
   const value = Number(n || 0);
   return `${moneda || "USD"} ${value.toFixed(2)}`;
@@ -59,15 +65,17 @@ export default function PedidosPage() {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [carrito, setCarrito] = useState<Record<string, ItemCarrito>>({});
-  const [vendedor, setVendedor] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [descuentoPorcentaje, setDescuentoPorcentaje] = useState(0);
+  const [perfilActual, setPerfilActual] = useState<PerfilActual | null>(null);
+  const [cargandoPerfil, setCargandoPerfil] = useState(true);
 
   const clienteBoxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    cargarPerfilActual();
     cargarProductos();
   }, []);
 
@@ -103,6 +111,36 @@ export default function PedidosPage() {
 
     return () => clearTimeout(timer);
   }, [busquedaCliente]);
+
+  async function cargarPerfilActual() {
+    setCargandoPerfil(true);
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setMensaje("No se pudo identificar el usuario actual.");
+      setCargandoPerfil(false);
+      return;
+    }
+
+    const { data: perfil, error: perfilError } = await supabase
+      .from("profiles")
+      .select("nombre, email, role")
+      .eq("id", user.id)
+      .single();
+
+    if (perfilError) {
+      setMensaje(`Error cargando perfil: ${perfilError.message}`);
+      setCargandoPerfil(false);
+      return;
+    }
+
+    setPerfilActual(perfil as PerfilActual);
+    setCargandoPerfil(false);
+  }
 
   async function cargarProductos() {
     const { data, error } = await supabase
@@ -302,6 +340,11 @@ export default function PedidosPage() {
       .reduce((acc, f) => acc + Number(f.monto || 0), 0);
   }, [facturas]);
 
+  const vendedorActual =
+    perfilActual?.nombre?.trim() ||
+    perfilActual?.email?.trim() ||
+    "Vendedor";
+
   async function guardarPedido(estado: "Borrador" | "Enviado") {
     if (!cliente) {
       setMensaje("Debes cargar un cliente antes de guardar el pedido.");
@@ -313,6 +356,11 @@ export default function PedidosPage() {
       return;
     }
 
+    if (!perfilActual) {
+      setMensaje("No se pudo identificar el vendedor actual.");
+      return;
+    }
+
     setGuardando(true);
 
     const { data: pedidoCreado, error: errorPedido } = await supabase
@@ -321,8 +369,9 @@ export default function PedidosPage() {
         {
           cliente_id: cliente.id,
           fecha: new Date().toISOString().slice(0, 10),
-          vendedor: vendedor.trim() || null,
+          vendedor: vendedorActual,
           estado,
+          estado_deposito: "Pendiente de revisión",
           subtotal: subtotal,
           descuento_porcentaje: descuentoPorcentaje,
           descuento_monto: descuentoMonto,
@@ -474,7 +523,7 @@ export default function PedidosPage() {
         </section>
 
         <section className="rounded-[24px] border border-white/10 bg-white/5 p-4">
-          <div className="flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
+          <div className="grid gap-3 md:grid-cols-[1fr_220px_220px] items-end">
             <div>
               <h1 className="text-2xl md:text-3xl font-semibold">Pedidos</h1>
               <p className="text-white/55 text-sm mt-1">
@@ -482,12 +531,26 @@ export default function PedidosPage() {
               </p>
             </div>
 
-            <input
-              value={busquedaProducto}
-              onChange={(e) => setBusquedaProducto(e.target.value)}
-              placeholder="Buscar por código, nombre o línea"
-              className="h-11 w-full md:w-96 rounded-2xl border border-white/10 bg-black/40 px-4 outline-none focus:border-cyan-400"
-            />
+            <div>
+              <label className="text-xs uppercase tracking-wider text-white/40 block mb-2">
+                Vendedor actual
+              </label>
+              <div className="h-11 w-full rounded-2xl border border-white/10 bg-black/40 px-4 flex items-center font-semibold text-cyan-300">
+                {cargandoPerfil ? "Cargando..." : vendedorActual}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs uppercase tracking-wider text-white/40 block mb-2">
+                Buscar producto
+              </label>
+              <input
+                value={busquedaProducto}
+                onChange={(e) => setBusquedaProducto(e.target.value)}
+                placeholder="Código, nombre o línea"
+                className="h-11 w-full rounded-2xl border border-white/10 bg-black/40 px-4 outline-none focus:border-cyan-400"
+              />
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 max-h-[58vh] overflow-auto pr-1">
@@ -642,13 +705,6 @@ export default function PedidosPage() {
                 </div>
               </div>
 
-              <input
-                value={vendedor}
-                onChange={(e) => setVendedor(e.target.value)}
-                placeholder="Vendedor"
-                className="h-11 w-full rounded-2xl border border-white/10 bg-black/40 px-4 outline-none focus:border-cyan-400"
-              />
-
               <textarea
                 value={observaciones}
                 onChange={(e) => setObservaciones(e.target.value)}
@@ -666,7 +722,7 @@ export default function PedidosPage() {
 
                 <button
                   onClick={() => guardarPedido("Borrador")}
-                  disabled={guardando}
+                  disabled={guardando || cargandoPerfil}
                   className="h-11 rounded-2xl border border-white/10 bg-white text-black font-semibold hover:bg-zinc-200 disabled:opacity-60"
                 >
                   Guardar borrador
@@ -674,7 +730,7 @@ export default function PedidosPage() {
 
                 <button
                   onClick={() => guardarPedido("Enviado")}
-                  disabled={guardando}
+                  disabled={guardando || cargandoPerfil}
                   className="h-11 rounded-2xl bg-cyan-400 text-black font-semibold hover:bg-cyan-300 disabled:opacity-60"
                 >
                   Enviar pedido
