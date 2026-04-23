@@ -58,6 +58,15 @@ export default async function HomePage() {
               </Link>
             )}
 
+            {(isAdmin || isVentas) && (
+              <Link
+                href="/mis-pedidos"
+                className="rounded-[28px] border border-white/20 bg-white/10 backdrop-blur text-white text-center font-semibold text-lg md:text-xl py-5 shadow-[0_10px_40px_rgba(0,0,0,0.35)] transition duration-300 hover:scale-[1.02] hover:bg-white/15"
+              >
+                Mis pedidos
+              </Link>
+            )}
+
             {isAdmin && (
               <Link
                 href="/deposito"
