@@ -121,7 +121,7 @@ export default function PedidosPage() {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      setMensaje("No se pudo identificar el usuario actual.");
+      setPerfilActual(null);
       setCargandoPerfil(false);
       return;
     }
@@ -133,12 +133,12 @@ export default function PedidosPage() {
       .single();
 
     if (perfilError) {
-      setMensaje(`Error cargando perfil: ${perfilError.message}`);
+      setPerfilActual(null);
       setCargandoPerfil(false);
       return;
     }
 
-    setPerfilActual(perfil as PerfilActual);
+    setPerfilActual((perfil || null) as PerfilActual | null);
     setCargandoPerfil(false);
   }
 
@@ -343,7 +343,7 @@ export default function PedidosPage() {
   const vendedorActual =
     perfilActual?.nombre?.trim() ||
     perfilActual?.email?.trim() ||
-    "Vendedor";
+    "";
 
   async function guardarPedido(estado: "Borrador" | "Enviado") {
     if (!cliente) {
@@ -356,8 +356,8 @@ export default function PedidosPage() {
       return;
     }
 
-    if (!perfilActual) {
-      setMensaje("No se pudo identificar el vendedor actual.");
+    if (!vendedorActual) {
+      setMensaje("No se pudo identificar el vendedor actual. Cierra sesión y vuelve a entrar.");
       return;
     }
 
@@ -536,7 +536,7 @@ export default function PedidosPage() {
                 Vendedor actual
               </label>
               <div className="h-11 w-full rounded-2xl border border-white/10 bg-black/40 px-4 flex items-center font-semibold text-cyan-300">
-                {cargandoPerfil ? "Cargando..." : vendedorActual}
+                {cargandoPerfil ? "Cargando..." : (vendedorActual || "Vendedor")}
               </div>
             </div>
 
