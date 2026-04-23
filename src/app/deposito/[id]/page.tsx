@@ -1,8 +1,8 @@
-import { redirect, notFound } from "next/navigation";
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase-server";
-
-const money = (n?: number | null) => `USD ${Number(n || 0).toFixed(2)}`;
+import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 export default async function DepositoDetallePage({
   params,
@@ -22,7 +22,9 @@ export default async function DepositoDetallePage({
   const { id } = await params;
   const pedidoId = Number(id);
 
-  if (!pedidoId) notFound();
+  if (!pedidoId) {
+    notFound();
+  }
 
   const supabase = await createClient();
 
@@ -34,10 +36,6 @@ export default async function DepositoDetallePage({
       vendedor,
       estado,
       estado_deposito,
-      subtotal,
-      descuento_porcentaje,
-      descuento_monto,
-      total,
       observaciones,
       clientes!pedidos_cliente_id_fkey (
         rut,
@@ -49,11 +47,13 @@ export default async function DepositoDetallePage({
     .eq("id", pedidoId)
     .single();
 
-  if (error || !pedido) notFound();
+  if (error || !pedido) {
+    notFound();
+  }
 
   const { data: items } = await supabase
     .from("pedido_items")
-    .select("*")
+    .select("id, codigo, nombre, cantidad")
     .eq("pedido_id", pedidoId)
     .order("id", { ascending: true });
 
@@ -61,30 +61,60 @@ export default async function DepositoDetallePage({
     ? (pedido as any).clientes[0]
     : (pedido as any).clientes;
 
+  const esPendiente = (pedido as any).estado_deposito === "Pendiente de revisión";
+
   return (
     <main className="min-h-screen bg-black text-white p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
-        <div>
-          <a
-            href="/deposito"
-            className="text-cyan-300 text-sm hover:underline"
-          >
-            ← Volver a depósito
-          </a>
-          <h1 className="text-3xl font-semibold mt-3">
-            {cliente?.nombre_comercial || cliente?.razon_social || "Cliente"}
-          </h1>
-          <p className="text-slate-300 mt-2">
-            Pedido #{pedido.id}
-          </p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <Link
+              href={esPendiente ? "/deposito" : "/deposito/finalizados"}
+              className="text-cyan-300 text-sm hover:underline"
+            >
+              ← Volver
+            </Link>
+
+            <h1 className="text-3xl font-semibold mt-3">
+              {cliente?.nombre_comercial || cliente?.razon_social || "Cliente"}
+            </h1>
+
+            <p className="text-slate-300 mt-2">
+              Pedido #{(pedido as any).id}
+            </p>
+          </div>
+
+          <div className="flex gap-3 flex-wrap">
+            {esPendiente && (
+              <>
+                <form action={finalizarPedidoAction}>
+                  <input type="hidden" name="pedido_id" value={(pedido as any).id} />
+                  <ConfirmSubmitButton
+                    label="Finalizar pedido"
+                    confirmText="¿Seguro que quieres finalizar este pedido?"
+                    className="h-11 px-5 rounded-2xl bg-cyan-400 text-slate-950 font-semibold hover:bg-cyan-300 transition"
+                  />
+                </form>
+
+                <form action={eliminarPedidoAction}>
+                  <input type="hidden" name="pedido_id" value={(pedido as any).id} />
+                  <ConfirmSubmitButton
+                    label="Eliminar pedido"
+                    confirmText="¿Seguro que quieres eliminar este pedido? Esta acción no se puede deshacer."
+                    className="h-11 px-5 rounded-2xl bg-rose-500 text-white font-semibold hover:bg-rose-400 transition"
+                  />
+                </form>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
             <MiniCard label="RUT" value={cliente?.rut || "-"} />
             <MiniCard label="Teléfono" value={cliente?.telefono || "-"} />
-            <MiniCard label="Vendedor" value={pedido.vendedor || "-"} />
-            <MiniCard label="Fecha" value={pedido.fecha || "-"} />
+            <MiniCard label="Vendedor" value={(pedido as any).vendedor || "-"} />
+            <MiniCard label="Fecha" value={(pedido as any).fecha || "-"} />
           </div>
         </div>
 
@@ -98,14 +128,12 @@ export default async function DepositoDetallePage({
               {items.map((item: any) => (
                 <div
                   key={item.id}
-                  className="rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 grid md:grid-cols-[100px_1fr_100px_120px_120px] gap-3 items-center"
+                  className="rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 grid grid-cols-[100px_1fr_110px] gap-3 items-center"
                 >
                   <div className="text-sm text-slate-400">{item.codigo}</div>
                   <div className="font-semibold">{item.nombre}</div>
-                  <div className="text-center">{item.cantidad}</div>
-                  <div className="text-right">{money(item.precio_unitario)}</div>
-                  <div className="text-right text-cyan-300 font-semibold">
-                    {money(item.subtotal)}
+                  <div className="text-center text-lg font-semibold text-cyan-300">
+                    {item.cantidad}
                   </div>
                 </div>
               ))}
@@ -113,40 +141,12 @@ export default async function DepositoDetallePage({
           )}
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="max-w-sm ml-auto space-y-2">
-            <Row label="Subtotal" value={money((pedido as any).subtotal)} />
-            <Row
-              label="Descuento"
-              value={`${Number((pedido as any).descuento_porcentaje || 0).toFixed(2)}%`}
-            />
-            <Row
-              label="Monto descuento"
-              value={`- ${money((pedido as any).descuento_monto)}`}
-            />
-            <div className="flex items-center justify-between border-t border-white/10 pt-3 text-lg font-semibold">
-              <span>Total</span>
-              <span className="text-cyan-300">{money((pedido as any).total)}</span>
-            </div>
-          </div>
-        </div>
-
         {pedido.observaciones && (
           <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
             <h2 className="text-lg font-semibold mb-2">Observaciones</h2>
-            <p className="text-slate-300">{pedido.observaciones}</p>
+            <p className="text-slate-300">{(pedido as any).observaciones}</p>
           </div>
         )}
-
-        <form action={finalizarPedidoAction} className="flex justify-end">
-          <input type="hidden" name="pedido_id" value={pedido.id} />
-          <button
-            type="submit"
-            className="h-12 px-6 rounded-2xl bg-cyan-400 text-slate-950 font-semibold hover:bg-cyan-300"
-          >
-            Finalizar pedido
-          </button>
-        </form>
       </div>
     </main>
   );
@@ -166,6 +166,18 @@ async function finalizarPedidoAction(formData: FormData) {
   redirect("/deposito");
 }
 
+async function eliminarPedidoAction(formData: FormData) {
+  "use server";
+
+  const pedidoId = Number(formData.get("pedido_id"));
+  const supabase = await createClient();
+
+  await supabase.from("pedido_items").delete().eq("pedido_id", pedidoId);
+  await supabase.from("pedidos").delete().eq("id", pedidoId);
+
+  redirect("/deposito");
+}
+
 function MiniCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 min-w-0">
@@ -173,15 +185,6 @@ function MiniCard({ label, value }: { label: string; value: string }) {
         {label}
       </div>
       <div className="text-sm font-semibold mt-1 truncate">{value}</div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-slate-400">{label}</span>
-      <span>{value}</span>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase-server";
 
 const money = (n?: number | null) => `USD ${Number(n || 0).toFixed(2)}`;
 
-export default async function DepositoPage() {
+export default async function DepositoFinalizadosPage() {
   const { user, profile } = await getCurrentUserProfile();
 
   if (!user || !profile) {
@@ -30,7 +30,7 @@ export default async function DepositoPage() {
         nombre_comercial
       )
     `)
-    .eq("estado_deposito", "Pendiente de revisión")
+    .eq("estado_deposito", "Pedido terminado")
     .order("id", { ascending: false });
 
   if (error) {
@@ -50,23 +50,23 @@ export default async function DepositoPage() {
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-3xl font-semibold">Depósito</h1>
+            <h1 className="text-3xl font-semibold">Depósito · Finalizados</h1>
             <p className="text-slate-300 mt-2">
-              Pedidos pendientes de revisión y armado.
+              Historial de pedidos ya armados por depósito.
             </p>
           </div>
 
           <Link
-            href="/deposito/finalizados"
+            href="/deposito"
             className="h-11 px-5 rounded-2xl border border-white/10 bg-white/5 text-white font-semibold flex items-center hover:bg-white/10 transition"
           >
-            Ver finalizados
+            Volver a pendientes
           </Link>
         </div>
 
         {!pedidos || pedidos.length === 0 ? (
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-slate-300">
-            No hay pedidos pendientes.
+            No hay pedidos finalizados.
           </div>
         ) : (
           <div className="space-y-3">
