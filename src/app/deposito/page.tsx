@@ -26,6 +26,7 @@ export default async function DepositoPage() {
       fecha,
       estado_deposito,
       clientes!pedidos_cliente_id_fkey (
+        rut,
         razon_social,
         nombre_comercial
       )
@@ -78,6 +79,7 @@ export default async function DepositoPage() {
               const nombre =
                 cliente?.nombre_comercial ||
                 cliente?.razon_social ||
+                cliente?.rut ||
                 "Cliente sin nombre";
 
               return (
