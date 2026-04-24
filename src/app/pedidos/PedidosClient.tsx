@@ -31,6 +31,11 @@ type Producto = {
   stock: number | null;
   activo: boolean | null;
   imagen_url: string | null;
+
+  aplica_descuento: boolean | null;
+  descuento_fijo_porcentaje: number | null;
+  venta_por_caja: boolean | null;
+  unidades_caja: number | null;
 };
 
 type ItemCarrito = {
@@ -38,10 +43,14 @@ type ItemCarrito = {
   codigo: string;
   nombre: string;
   precio: number;
+  precio_lista: number;
   moneda: string | null;
   cantidad: number;
   subtotal: number;
+  subtotal_lista: number;
   imagen_url: string | null;
+  descuento_aplicado_porcentaje: number;
+  precio_especial: boolean;
 };
 
 function money(n?: number | null, moneda?: string | null) {
@@ -107,6 +116,38 @@ export default function PedidosClient({
     return () => clearTimeout(timer);
   }, [busquedaCliente]);
 
+  useEffect(() => {
+    setCarrito((prev) => {
+      const nuevo: Record<string, ItemCarrito> = {};
+
+      Object.values(prev).forEach((item) => {
+        const producto = productos.find((p) => Number(p.id) === Number(item.id));
+
+        if (!producto) {
+          nuevo[String(item.id)] = item;
+          return;
+        }
+
+        const precioCalculado = calcularPrecioProducto(producto);
+        const precioLista = Number(producto.precio || 0);
+        const descuentoAplicado = calcularDescuentoAplicado(producto);
+        const precioEspecial = esPrecioEspecial(producto);
+
+        nuevo[String(item.id)] = {
+          ...item,
+          precio: precioCalculado,
+          precio_lista: precioLista,
+          subtotal: precioCalculado * item.cantidad,
+          subtotal_lista: precioLista * item.cantidad,
+          descuento_aplicado_porcentaje: descuentoAplicado,
+          precio_especial: precioEspecial,
+        };
+      });
+
+      return nuevo;
+    });
+  }, [descuentoPorcentaje, productos]);
+
   async function cargarProductos() {
     const { data, error } = await supabase
       .from("productos")
@@ -120,6 +161,41 @@ export default function PedidosClient({
     }
 
     setProductos((data || []) as Producto[]);
+  }
+
+  function calcularDescuentoAplicado(producto: Producto) {
+    const fijo = Number(producto.descuento_fijo_porcentaje || 0);
+
+    if (fijo > 0) {
+      return fijo;
+    }
+
+    if (producto.aplica_descuento === false) {
+      return 0;
+    }
+
+    return Number(descuentoPorcentaje || 0);
+  }
+
+  function calcularPrecioProducto(producto: Producto) {
+    const precioLista = Number(producto.precio || 0);
+    const descuentoAplicado = calcularDescuentoAplicado(producto);
+
+    if (descuentoAplicado <= 0) {
+      return precioLista;
+    }
+
+    return precioLista * (1 - descuentoAplicado / 100);
+  }
+
+  function esPrecioEspecial(producto: Producto) {
+    const fijo = Number(producto.descuento_fijo_porcentaje || 0);
+
+    return (
+      fijo > 0 ||
+      producto.aplica_descuento === false ||
+      producto.venta_por_caja === true
+    );
   }
 
   async function buscarClientesEnVivo(texto: string) {
@@ -187,14 +263,24 @@ export default function PedidosClient({
       const key = String(producto.id);
       const actual = prev[key];
 
+      const precioLista = Number(producto.precio || 0);
+      const precioFinal = calcularPrecioProducto(producto);
+      const descuentoAplicado = calcularDescuentoAplicado(producto);
+      const precioEspecial = esPrecioEspecial(producto);
+
       if (actual) {
         const cantidad = actual.cantidad + 1;
         return {
           ...prev,
           [key]: {
             ...actual,
+            precio: precioFinal,
+            precio_lista: precioLista,
             cantidad,
-            subtotal: cantidad * Number(actual.precio || 0),
+            subtotal: cantidad * precioFinal,
+            subtotal_lista: cantidad * precioLista,
+            descuento_aplicado_porcentaje: descuentoAplicado,
+            precio_especial: precioEspecial,
           },
         };
       }
@@ -205,11 +291,15 @@ export default function PedidosClient({
           id: Number(producto.id),
           codigo: producto.codigo,
           nombre: producto.nombre,
-          precio: Number(producto.precio || 0),
+          precio: precioFinal,
+          precio_lista: precioLista,
           moneda: producto.moneda || "USD",
           cantidad: 1,
-          subtotal: Number(producto.precio || 0),
+          subtotal: precioFinal,
+          subtotal_lista: precioLista,
           imagen_url: producto.imagen_url || null,
+          descuento_aplicado_porcentaje: descuentoAplicado,
+          precio_especial: precioEspecial,
         },
       };
     });
@@ -235,6 +325,7 @@ export default function PedidosClient({
           ...actual,
           cantidad,
           subtotal: cantidad * Number(actual.precio || 0),
+          subtotal_lista: cantidad * Number(actual.precio_lista || 0),
         },
       };
     });
@@ -254,6 +345,7 @@ export default function PedidosClient({
           ...actual,
           cantidad,
           subtotal: cantidad * Number(actual.precio || 0),
+          subtotal_lista: cantidad * Number(actual.precio_lista || 0),
         },
       };
     });
@@ -288,16 +380,16 @@ export default function PedidosClient({
   const items = Object.values(carrito);
 
   const subtotal = useMemo(() => {
+    return items.reduce((acc, item) => acc + Number(item.subtotal_lista || 0), 0);
+  }, [items]);
+
+  const total = useMemo(() => {
     return items.reduce((acc, item) => acc + Number(item.subtotal || 0), 0);
   }, [items]);
 
   const descuentoMonto = useMemo(() => {
-    return subtotal * (descuentoPorcentaje / 100);
-  }, [subtotal, descuentoPorcentaje]);
-
-  const total = useMemo(() => {
-    return subtotal - descuentoMonto;
-  }, [subtotal, descuentoMonto]);
+    return subtotal - total;
+  }, [subtotal, total]);
 
   const deuda = Number(cliente?.saldo_pendiente || 0);
 
@@ -527,48 +619,101 @@ export default function PedidosClient({
             </div>
           </div>
 
+          <div className="mt-4 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-wider text-cyan-200/70">
+                Descuento general
+              </div>
+              <div className="text-sm text-white/55">
+                Se aplica solo a productos normales. Los especiales respetan su regla.
+              </div>
+            </div>
+
+            <select
+              value={descuentoPorcentaje}
+              onChange={(e) => setDescuentoPorcentaje(Number(e.target.value))}
+              className="h-11 rounded-xl border border-white/10 bg-black/40 px-4 outline-none text-white font-semibold"
+            >
+              <option value={0}>0%</option>
+              <option value={15}>15%</option>
+              <option value={23}>23%</option>
+              <option value={30}>30%</option>
+            </select>
+          </div>
+
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 max-h-[58vh] overflow-auto pr-1">
-            {productosFiltrados.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => agregarProducto(p)}
-                className="group rounded-[22px] border border-white/10 bg-black/35 overflow-hidden text-left hover:bg-white/10 transition"
-              >
-                <div className="aspect-square bg-zinc-900 relative flex items-center justify-center">
-                  {p.imagen_url ? (
-                    <img
-                      src={p.imagen_url}
-                      alt={p.nombre}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="px-3 text-center">
-                      <div className="text-[11px] text-white/40">{p.codigo}</div>
-                      <div className="text-sm font-semibold text-white/90 mt-1 line-clamp-3">
-                        {p.nombre}
+            {productosFiltrados.map((p) => {
+              const precioLista = Number(p.precio || 0);
+              const precioFinal = calcularPrecioProducto(p);
+              const descuentoAplicado = calcularDescuentoAplicado(p);
+              const precioEspecial = esPrecioEspecial(p);
+              const mostrarTachado =
+                descuentoAplicado > 0 && precioFinal < precioLista;
+
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => agregarProducto(p)}
+                  className="group rounded-[22px] border border-white/10 bg-black/35 overflow-hidden text-left hover:bg-white/10 transition"
+                >
+                  <div className="aspect-square bg-zinc-900 relative flex items-center justify-center">
+                    {p.imagen_url ? (
+                      <img
+                        src={p.imagen_url}
+                        alt={p.nombre}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="px-3 text-center">
+                        <div className="text-[11px] text-white/40">{p.codigo}</div>
+                        <div className="text-sm font-semibold text-white/90 mt-1 line-clamp-3">
+                          {p.nombre}
+                        </div>
                       </div>
+                    )}
+
+                    <div className="absolute top-2 right-2 rounded-full bg-black/70 text-white text-[11px] px-2 py-1">
+                      {carrito[String(p.id)]?.cantidad || 0}
                     </div>
-                  )}
 
-                  <div className="absolute top-2 right-2 rounded-full bg-black/70 text-white text-[11px] px-2 py-1">
-                    {carrito[String(p.id)]?.cantidad || 0}
+                    {precioEspecial && (
+                      <div className="absolute left-2 top-2 rounded-full bg-amber-400 text-black text-[10px] px-2 py-1 font-bold">
+                        Especial
+                      </div>
+                    )}
                   </div>
-                </div>
 
-                <div className="p-3">
-                  <div className="text-[11px] text-white/40">{p.codigo}</div>
-                  <div className="font-semibold text-sm leading-tight mt-1 line-clamp-2">
-                    {p.nombre}
+                  <div className="p-3">
+                    <div className="text-[11px] text-white/40">{p.codigo}</div>
+                    <div className="font-semibold text-sm leading-tight mt-1 line-clamp-2">
+                      {p.nombre}
+                    </div>
+                    <div className="text-[12px] text-white/45 mt-1 line-clamp-1">
+                      {p.linea || p.categoria || "Sin línea"}
+                    </div>
+
+                    <div className="mt-2">
+                      {mostrarTachado && (
+                        <div className="text-[12px] text-white/45 line-through">
+                          {money(precioLista, p.moneda)}
+                        </div>
+                      )}
+
+                      <div className="text-cyan-300 font-semibold text-lg leading-tight">
+                        {money(precioFinal, p.moneda)}
+                      </div>
+
+                      {descuentoAplicado > 0 && (
+                        <div className="text-[11px] text-amber-300 mt-1">
+                          {precioEspecial ? "Descuento fijo" : "Desc. aplicado"}{" "}
+                          {descuentoAplicado}%
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-[12px] text-white/45 mt-1 line-clamp-1">
-                    {p.linea || p.categoria || "Sin línea"}
-                  </div>
-                  <div className="text-cyan-300 font-semibold mt-2">
-                    {money(p.precio, p.moneda)}
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -600,6 +745,14 @@ export default function PedidosClient({
                     <div className="min-w-0">
                       <div className="text-[11px] text-white/40">{item.codigo}</div>
                       <div className="font-semibold text-sm truncate">{item.nombre}</div>
+
+                      {item.descuento_aplicado_porcentaje > 0 &&
+                        item.precio < item.precio_lista && (
+                          <div className="text-[11px] text-white/40 line-through mt-1">
+                            {money(item.precio_lista * item.cantidad, item.moneda)}
+                          </div>
+                        )}
+
                       <div className="text-cyan-300 text-sm mt-1">
                         {money(item.subtotal, item.moneda)}
                       </div>
@@ -622,12 +775,19 @@ export default function PedidosClient({
                       />
 
                       <button
-                        onClick={() =>
+                        onClick={() => {
+                          const producto = productos.find((p) => p.id === item.id);
+
+                          if (producto) {
+                            agregarProducto(producto);
+                            return;
+                          }
+
                           agregarProducto({
                             id: item.id,
                             codigo: item.codigo,
                             nombre: item.nombre,
-                            precio: item.precio,
+                            precio: item.precio_lista,
                             moneda: item.moneda,
                             descripcion: null,
                             categoria: null,
@@ -635,8 +795,12 @@ export default function PedidosClient({
                             stock: 0,
                             activo: true,
                             imagen_url: item.imagen_url,
-                          })
-                        }
+                            aplica_descuento: true,
+                            descuento_fijo_porcentaje: null,
+                            venta_por_caja: false,
+                            unidades_caja: null,
+                          });
+                        }}
                         className="h-9 w-9 rounded-xl border border-white/10 bg-white/5 text-lg"
                       >
                         +
@@ -650,26 +814,12 @@ export default function PedidosClient({
             <div className="space-y-3">
               <div className="rounded-2xl border border-white/10 bg-black/30 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-white/60">Subtotal</span>
+                  <span className="text-white/60">Subtotal lista</span>
                   <span className="font-semibold">{money(subtotal, "USD")}</span>
                 </div>
 
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-white/60">Descuento</span>
-                  <select
-                    value={descuentoPorcentaje}
-                    onChange={(e) => setDescuentoPorcentaje(Number(e.target.value))}
-                    className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 outline-none text-white"
-                  >
-                    <option value={0}>0%</option>
-                    <option value={15}>15%</option>
-                    <option value={23}>23%</option>
-                    <option value={30}>30%</option>
-                  </select>
-                </div>
-
                 <div className="flex items-center justify-between">
-                  <span className="text-white/60">Monto descuento</span>
+                  <span className="text-white/60">Descuento total</span>
                   <span className="font-semibold text-amber-300">
                     - {money(descuentoMonto, "USD")}
                   </span>
