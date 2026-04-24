@@ -39,6 +39,11 @@ export default function DepositoDetallePage() {
   const [finalizando, setFinalizando] = useState(false);
   const [eliminando, setEliminando] = useState(false);
   const [mensaje, setMensaje] = useState("");
+  const [puedeBorrarFinalizado, setPuedeBorrarFinalizado] = useState(false);
+
+  useEffect(() => {
+    cargarPermiso();
+  }, []);
 
   useEffect(() => {
     if (!pedidoId || Number.isNaN(pedidoId)) {
@@ -55,6 +60,22 @@ export default function DepositoDetallePage() {
     const t = setTimeout(() => setMensaje(""), 4000);
     return () => clearTimeout(t);
   }, [mensaje]);
+
+  async function cargarPermiso() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("can_delete_finalizado")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    setPuedeBorrarFinalizado(Boolean(data?.can_delete_finalizado));
+  }
 
   async function cargarPedido() {
     setCargando(true);
@@ -140,7 +161,9 @@ export default function DepositoDetallePage() {
     const actualesIds = (actualesData || []).map((x: any) => x.id);
     const nuevosIds = items.map((x) => x.id);
 
-    const idsABorrar = actualesIds.filter((id: number) => !nuevosIds.includes(id));
+    const idsABorrar = actualesIds.filter(
+      (id: number) => !nuevosIds.includes(id)
+    );
 
     if (idsABorrar.length > 0) {
       const { error: deleteError } = await supabase
@@ -192,29 +215,23 @@ export default function DepositoDetallePage() {
     window.location.href = "/deposito";
   }
 
-  async function eliminarPedido() {
-    if (!window.confirm("¿Seguro que quieres eliminar este pedido? Esta acción no se puede deshacer.")) return;
-
-    setEliminando(true);
-
-    const { error: itemsError } = await supabase
-      .from("pedido_items")
-      .delete()
-      .eq("pedido_id", pedidoId);
-
-    if (itemsError) {
-      setMensaje(`Error borrando items: ${itemsError.message}`);
-      setEliminando(false);
+  async function eliminarPedidoPendiente() {
+    if (
+      !window.confirm(
+        "¿Seguro que quieres eliminar este pedido pendiente? Esta acción no se puede deshacer."
+      )
+    ) {
       return;
     }
 
-    const { error: pedidoError } = await supabase
-      .from("pedidos")
-      .delete()
-      .eq("id", pedidoId);
+    setEliminando(true);
 
-    if (pedidoError) {
-      setMensaje(`Error borrando pedido: ${pedidoError.message}`);
+    const { error } = await supabase.rpc("delete_pedido_pendiente", {
+      p_pedido_id: pedidoId,
+    });
+
+    if (error) {
+      setMensaje(`Error eliminando pedido: ${error.message}`);
       setEliminando(false);
       return;
     }
@@ -222,7 +239,32 @@ export default function DepositoDetallePage() {
     window.location.href = "/deposito";
   }
 
+  async function eliminarPedidoFinalizado() {
+    if (
+      !window.confirm(
+        "¿Seguro que quieres eliminar este pedido FINALIZADO? Esta acción no se puede deshacer."
+      )
+    ) {
+      return;
+    }
+
+    setEliminando(true);
+
+    const { error } = await supabase.rpc("delete_pedido_finalizado", {
+      p_pedido_id: pedidoId,
+    });
+
+    if (error) {
+      setMensaje(`Error eliminando pedido finalizado: ${error.message}`);
+      setEliminando(false);
+      return;
+    }
+
+    window.location.href = "/deposito/finalizados";
+  }
+
   const cliente = pedido?.clientes;
+
   const nombreCliente =
     cliente?.nombre_comercial ||
     cliente?.razon_social ||
@@ -230,6 +272,7 @@ export default function DepositoDetallePage() {
     "Cliente sin nombre";
 
   const esPendiente = pedido?.estado_deposito === "Pendiente de revisión";
+  const esFinalizado = pedido?.estado_deposito === "Pedido terminado";
 
   return (
     <main className="min-h-screen bg-black text-white p-4 md:p-8">
@@ -243,42 +286,56 @@ export default function DepositoDetallePage() {
               ← Volver
             </Link>
 
-            <h1 className="text-3xl font-semibold mt-3">
-              {nombreCliente}
-            </h1>
+            <h1 className="text-3xl font-semibold mt-3">{nombreCliente}</h1>
 
             <p className="text-slate-300 mt-2">
               Pedido #{pedido?.id || pedidoId}
             </p>
+
+            <p className="text-sm text-slate-500 mt-1">
+              Estado: {pedido?.estado_deposito || "-"}
+            </p>
           </div>
 
-          {esPendiente && (
-            <div className="flex gap-3 flex-wrap">
-              <button
-                onClick={guardarAjustes}
-                disabled={guardando}
-                className="h-11 px-5 rounded-2xl bg-white text-slate-950 font-semibold hover:bg-zinc-200 transition disabled:opacity-60"
-              >
-                {guardando ? "Guardando..." : "Guardar ajustes"}
-              </button>
+          <div className="flex gap-3 flex-wrap">
+            {esPendiente && (
+              <>
+                <button
+                  onClick={guardarAjustes}
+                  disabled={guardando}
+                  className="h-11 px-5 rounded-2xl bg-white text-slate-950 font-semibold hover:bg-zinc-200 transition disabled:opacity-60"
+                >
+                  {guardando ? "Guardando..." : "Guardar ajustes"}
+                </button>
 
-              <button
-                onClick={finalizarPedido}
-                disabled={finalizando}
-                className="h-11 px-5 rounded-2xl bg-cyan-400 text-slate-950 font-semibold hover:bg-cyan-300 transition disabled:opacity-60"
-              >
-                {finalizando ? "Finalizando..." : "Finalizar pedido"}
-              </button>
+                <button
+                  onClick={finalizarPedido}
+                  disabled={finalizando}
+                  className="h-11 px-5 rounded-2xl bg-cyan-400 text-slate-950 font-semibold hover:bg-cyan-300 transition disabled:opacity-60"
+                >
+                  {finalizando ? "Finalizando..." : "Finalizar pedido"}
+                </button>
 
+                <button
+                  onClick={eliminarPedidoPendiente}
+                  disabled={eliminando}
+                  className="h-11 px-5 rounded-2xl bg-rose-500 text-white font-semibold hover:bg-rose-400 transition disabled:opacity-60"
+                >
+                  {eliminando ? "Eliminando..." : "Eliminar pedido"}
+                </button>
+              </>
+            )}
+
+            {esFinalizado && puedeBorrarFinalizado && (
               <button
-                onClick={eliminarPedido}
+                onClick={eliminarPedidoFinalizado}
                 disabled={eliminando}
-                className="h-11 px-5 rounded-2xl bg-rose-500 text-white font-semibold hover:bg-rose-400 transition disabled:opacity-60"
+                className="h-11 px-5 rounded-2xl bg-rose-600 text-white font-semibold hover:bg-rose-500 transition disabled:opacity-60"
               >
-                {eliminando ? "Eliminando..." : "Eliminar pedido"}
+                {eliminando ? "Eliminando..." : "Eliminar finalizado"}
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {mensaje && (
@@ -306,7 +363,9 @@ export default function DepositoDetallePage() {
               <h2 className="text-xl font-semibold mb-4">Productos</h2>
 
               {!items.length ? (
-                <div className="text-slate-400">Este pedido no tiene items.</div>
+                <div className="text-slate-400">
+                  Este pedido no tiene items.
+                </div>
               ) : (
                 <div className="space-y-3">
                   {items.map((item) => (
@@ -314,7 +373,9 @@ export default function DepositoDetallePage() {
                       key={item.id}
                       className="rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 grid grid-cols-[90px_1fr_110px_auto] gap-3 items-center"
                     >
-                      <div className="text-sm text-slate-400">{item.codigo}</div>
+                      <div className="text-sm text-slate-400">
+                        {item.codigo}
+                      </div>
 
                       <div className="font-semibold">{item.nombre}</div>
 
