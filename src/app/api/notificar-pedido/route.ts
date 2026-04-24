@@ -1,163 +1,176 @@
 import { NextResponse } from "next/server";
-import { Resend } from "resend";
 import { createClient } from "@supabase/supabase-js";
-
-const resend = new Resend(process.env.RESEND_API_KEY);
+import { Resend } from "resend";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function GET() {
-  return NextResponse.json({ ok: true, ruta: "notificar-pedido activa" });
-}
+const resend = new Resend(process.env.RESEND_API_KEY!);
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const pedidoId = body?.pedidoId;
+    const { pedidoId } = await req.json();
 
     if (!pedidoId) {
       return NextResponse.json({ error: "Falta pedidoId" }, { status: 400 });
     }
 
+    // 1. Traer pedido + cliente
     const { data: pedido, error: pedidoError } = await supabase
       .from("pedidos")
       .select(`
         id,
         fecha,
         vendedor,
-        estado,
         subtotal,
         descuento_porcentaje,
         descuento_monto,
         total,
         observaciones,
-        estado_deposito,
-        clientes!pedidos_cliente_id_fkey (
-          rut,
+        clientes (
           razon_social,
           nombre_comercial,
+          rut,
           telefono
         )
       `)
       .eq("id", pedidoId)
       .single();
 
-    if (pedidoError || !pedido) {
-      return NextResponse.json(
-        { error: pedidoError?.message || "Pedido no encontrado" },
-        { status: 404 }
-      );
+    if (pedidoError) {
+      return NextResponse.json({ error: pedidoError.message }, { status: 500 });
     }
 
+    // 2. Traer items
     const { data: items, error: itemsError } = await supabase
       .from("pedido_items")
       .select("codigo, nombre, cantidad, precio_unitario, subtotal")
-      .eq("pedido_id", pedidoId)
-      .order("id", { ascending: true });
+      .eq("pedido_id", pedidoId);
 
     if (itemsError) {
       return NextResponse.json({ error: itemsError.message }, { status: 500 });
     }
 
-    const cliente = Array.isArray((pedido as any).clientes)
-      ? (pedido as any).clientes[0]
-      : (pedido as any).clientes;
+    const cliente =
+      pedido.clientes?.nombre_comercial ||
+      pedido.clientes?.razon_social ||
+      pedido.clientes?.rut ||
+      "Cliente";
 
-    const filas = (items || [])
+    // ============================
+    // 📧 EMAIL ADMIN (CON PRECIOS)
+    // ============================
+
+    const itemsAdminHTML = items
       .map(
-        (item) => `
-          <tr>
-            <td style="padding:8px;border:1px solid #ddd;">${item.codigo ?? ""}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${item.nombre ?? ""}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;">${item.cantidad ?? 0}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:right;">USD ${Number(item.precio_unitario ?? 0).toFixed(2)}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:right;">USD ${Number(item.subtotal ?? 0).toFixed(2)}</td>
-          </tr>
-        `
+        (item: any) => `
+        <tr>
+          <td style="padding:6px 10px;">${item.codigo}</td>
+          <td style="padding:6px 10px;">${item.nombre}</td>
+          <td style="padding:6px 10px; text-align:center;">${item.cantidad}</td>
+          <td style="padding:6px 10px;">USD ${item.precio_unitario}</td>
+          <td style="padding:6px 10px;">USD ${item.subtotal}</td>
+        </tr>
+      `
       )
       .join("");
 
-    const html = `
-      <div style="font-family:Arial,sans-serif;color:#111;">
-        <h2>Nuevo pedido enviado</h2>
-        <p><strong>Pedido:</strong> #${pedido.id}</p>
-        <p><strong>Fecha:</strong> ${pedido.fecha}</p>
-        <p><strong>Vendedor:</strong> ${pedido.vendedor || "-"}</p>
-        <p><strong>Estado:</strong> ${pedido.estado}</p>
-        <p><strong>Estado depósito:</strong> ${pedido.estado_deposito || "Pendiente"}</p>
+    const htmlAdmin = `
+      <h2>Nuevo Pedido</h2>
+      <p><strong>Cliente:</strong> ${cliente}</p>
+      <p><strong>Vendedor:</strong> ${pedido.vendedor}</p>
+      <p><strong>Fecha:</strong> ${pedido.fecha}</p>
 
-        <hr />
+      <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            <th>Precio</th>
+            <th>Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsAdminHTML}
+        </tbody>
+      </table>
 
-        <h3>Cliente</h3>
-        <p><strong>RUT:</strong> ${cliente?.rut || "-"}</p>
-        <p><strong>Nombre comercial:</strong> ${cliente?.nombre_comercial || "-"}</p>
-        <p><strong>Razón social:</strong> ${cliente?.razon_social || "-"}</p>
-        <p><strong>Teléfono:</strong> ${cliente?.telefono || "-"}</p>
+      <p><strong>Subtotal:</strong> USD ${pedido.subtotal}</p>
+      <p><strong>Descuento:</strong> ${pedido.descuento_porcentaje}%</p>
+      <p><strong>Total:</strong> USD ${pedido.total}</p>
 
-        <hr />
-
-        <h3>Detalle</h3>
-        <table style="border-collapse:collapse;width:100%;">
-          <thead>
-            <tr>
-              <th style="padding:8px;border:1px solid #ddd;text-align:left;">Código</th>
-              <th style="padding:8px;border:1px solid #ddd;text-align:left;">Producto</th>
-              <th style="padding:8px;border:1px solid #ddd;text-align:center;">Cant.</th>
-              <th style="padding:8px;border:1px solid #ddd;text-align:right;">P. Unit.</th>
-              <th style="padding:8px;border:1px solid #ddd;text-align:right;">Subtotal</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filas}
-          </tbody>
-        </table>
-
-        <hr />
-
-        <p><strong>Subtotal:</strong> USD ${Number((pedido as any).subtotal || 0).toFixed(2)}</p>
-        <p><strong>Descuento:</strong> ${Number((pedido as any).descuento_porcentaje || 0).toFixed(2)}%</p>
-        <p><strong>Monto descuento:</strong> USD ${Number((pedido as any).descuento_monto || 0).toFixed(2)}</p>
-        <p><strong>Total final:</strong> USD ${Number((pedido as any).total || 0).toFixed(2)}</p>
-        <p><strong>Observaciones:</strong> ${(pedido as any).observaciones || "-"}</p>
-      </div>
+      ${
+        pedido.observaciones
+          ? `<p><strong>Observaciones:</strong> ${pedido.observaciones}</p>`
+          : ""
+      }
     `;
 
-    const { error: emailError } = await resend.emails.send({
-      from: process.env.PEDIDOS_FROM_EMAIL!,
-      to: [process.env.PEDIDOS_TO_EMAIL!],
-      subject: `Nuevo pedido #${pedido.id} - ${cliente?.nombre_comercial || cliente?.razon_social || "Cliente"}`,
-      html,
+    await resend.emails.send({
+      from: "Pedidos <onboarding@resend.dev>",
+      to: ["vitaflorsociedad@gmail.com"],
+      subject: `Nuevo pedido - ${cliente}`,
+      html: htmlAdmin,
     });
 
-    if (emailError) {
-      await supabase
-        .from("pedidos")
-        .update({
-          email_enviado: false,
-          email_destino: process.env.PEDIDOS_TO_EMAIL!,
-          email_error: String(emailError.message || "Error enviando email"),
-        })
-        .eq("id", pedidoId);
+    // ============================
+    // 📧 EMAIL DEPÓSITO (SIN PRECIOS)
+    // ============================
 
-      return NextResponse.json({ error: emailError.message }, { status: 500 });
-    }
+    const itemsDepositoHTML = items
+      .map(
+        (item: any) => `
+        <tr>
+          <td style="padding:8px 10px;">${item.codigo}</td>
+          <td style="padding:8px 10px;">${item.nombre}</td>
+          <td style="padding:8px 10px; text-align:center; font-weight:bold;">${item.cantidad}</td>
+        </tr>
+      `
+      )
+      .join("");
 
-    await supabase
-      .from("pedidos")
-      .update({
-        email_enviado: true,
-        email_destino: process.env.PEDIDOS_TO_EMAIL!,
-        email_error: null,
-      })
-      .eq("id", pedidoId);
+    const htmlDeposito = `
+      <h2>🚨 NUEVO PEDIDO</h2>
+
+      <p><strong>Cliente:</strong> ${cliente}</p>
+      <p><strong>Vendedor:</strong> ${pedido.vendedor}</p>
+
+      <br/>
+
+      <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Producto</th>
+            <th>Cantidad</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsDepositoHTML}
+        </tbody>
+      </table>
+
+      ${
+        pedido.observaciones
+          ? `<p><strong>Observaciones:</strong> ${pedido.observaciones}</p>`
+          : ""
+      }
+    `;
+
+    await resend.emails.send({
+      from: "Depósito <onboarding@resend.dev>",
+      to: ["litiumdeposito@gmail.com"],
+      subject: `🚨 NUEVO PEDIDO - ${cliente}`,
+      html: htmlDeposito,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json(
-      { error: error?.message || "Error interno" },
+      { error: error.message || "Error desconocido" },
       { status: 500 }
     );
   }
