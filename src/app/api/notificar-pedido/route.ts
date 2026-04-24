@@ -17,7 +17,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Falta pedidoId" }, { status: 400 });
     }
 
-    // 1. Traer pedido + cliente
     const { data: pedido, error: pedidoError } = await supabase
       .from("pedidos")
       .select(`
@@ -29,7 +28,7 @@ export async function POST(req: Request) {
         descuento_monto,
         total,
         observaciones,
-        clientes (
+        clientes!pedidos_cliente_id_fkey (
           razon_social,
           nombre_comercial,
           rut,
@@ -39,11 +38,13 @@ export async function POST(req: Request) {
       .eq("id", pedidoId)
       .single();
 
-    if (pedidoError) {
-      return NextResponse.json({ error: pedidoError.message }, { status: 500 });
+    if (pedidoError || !pedido) {
+      return NextResponse.json(
+        { error: pedidoError?.message || "No se encontró el pedido" },
+        { status: 500 }
+      );
     }
 
-    // 2. Traer items
     const { data: items, error: itemsError } = await supabase
       .from("pedido_items")
       .select("codigo, nombre, cantidad, precio_unitario, subtotal")
@@ -53,44 +54,47 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: itemsError.message }, { status: 500 });
     }
 
+    const clienteData = Array.isArray((pedido as any).clientes)
+      ? (pedido as any).clientes[0]
+      : (pedido as any).clientes;
+
     const cliente =
-      pedido.clientes?.nombre_comercial ||
-      pedido.clientes?.razon_social ||
-      pedido.clientes?.rut ||
+      clienteData?.nombre_comercial ||
+      clienteData?.razon_social ||
+      clienteData?.rut ||
       "Cliente";
 
-    // ============================
-    // 📧 EMAIL ADMIN (CON PRECIOS)
-    // ============================
-
-    const itemsAdminHTML = items
+    const itemsAdminHTML = (items || [])
       .map(
         (item: any) => `
-        <tr>
-          <td style="padding:6px 10px;">${item.codigo}</td>
-          <td style="padding:6px 10px;">${item.nombre}</td>
-          <td style="padding:6px 10px; text-align:center;">${item.cantidad}</td>
-          <td style="padding:6px 10px;">USD ${item.precio_unitario}</td>
-          <td style="padding:6px 10px;">USD ${item.subtotal}</td>
-        </tr>
-      `
+          <tr>
+            <td style="padding:6px 10px;">${item.codigo || ""}</td>
+            <td style="padding:6px 10px;">${item.nombre || ""}</td>
+            <td style="padding:6px 10px; text-align:center;">${item.cantidad || 0}</td>
+            <td style="padding:6px 10px;">USD ${Number(item.precio_unitario || 0).toFixed(2)}</td>
+            <td style="padding:6px 10px;">USD ${Number(item.subtotal || 0).toFixed(2)}</td>
+          </tr>
+        `
       )
       .join("");
 
     const htmlAdmin = `
-      <h2>Nuevo Pedido</h2>
+      <h2>Nuevo pedido</h2>
+
       <p><strong>Cliente:</strong> ${cliente}</p>
-      <p><strong>Vendedor:</strong> ${pedido.vendedor}</p>
-      <p><strong>Fecha:</strong> ${pedido.fecha}</p>
+      <p><strong>RUT:</strong> ${clienteData?.rut || "-"}</p>
+      <p><strong>Teléfono:</strong> ${clienteData?.telefono || "-"}</p>
+      <p><strong>Vendedor:</strong> ${pedido.vendedor || "-"}</p>
+      <p><strong>Fecha:</strong> ${pedido.fecha || "-"}</p>
 
       <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         <thead>
           <tr>
-            <th>Código</th>
-            <th>Producto</th>
-            <th>Cantidad</th>
-            <th>Precio</th>
-            <th>Subtotal</th>
+            <th style="padding:6px 10px;">Código</th>
+            <th style="padding:6px 10px;">Producto</th>
+            <th style="padding:6px 10px;">Cantidad</th>
+            <th style="padding:6px 10px;">Precio</th>
+            <th style="padding:6px 10px;">Subtotal</th>
           </tr>
         </thead>
         <tbody>
@@ -98,9 +102,10 @@ export async function POST(req: Request) {
         </tbody>
       </table>
 
-      <p><strong>Subtotal:</strong> USD ${pedido.subtotal}</p>
-      <p><strong>Descuento:</strong> ${pedido.descuento_porcentaje}%</p>
-      <p><strong>Total:</strong> USD ${pedido.total}</p>
+      <p><strong>Subtotal:</strong> USD ${Number(pedido.subtotal || 0).toFixed(2)}</p>
+      <p><strong>Descuento:</strong> ${Number(pedido.descuento_porcentaje || 0)}%</p>
+      <p><strong>Monto descuento:</strong> USD ${Number(pedido.descuento_monto || 0).toFixed(2)}</p>
+      <p><strong>Total:</strong> USD ${Number(pedido.total || 0).toFixed(2)}</p>
 
       ${
         pedido.observaciones
@@ -109,26 +114,15 @@ export async function POST(req: Request) {
       }
     `;
 
-    await resend.emails.send({
-      from: "Pedidos <onboarding@resend.dev>",
-      to: ["vitaflorsociedad@gmail.com"],
-      subject: `Nuevo pedido - ${cliente}`,
-      html: htmlAdmin,
-    });
-
-    // ============================
-    // 📧 EMAIL DEPÓSITO (SIN PRECIOS)
-    // ============================
-
-    const itemsDepositoHTML = items
+    const itemsDepositoHTML = (items || [])
       .map(
         (item: any) => `
-        <tr>
-          <td style="padding:8px 10px;">${item.codigo}</td>
-          <td style="padding:8px 10px;">${item.nombre}</td>
-          <td style="padding:8px 10px; text-align:center; font-weight:bold;">${item.cantidad}</td>
-        </tr>
-      `
+          <tr>
+            <td style="padding:8px 10px;">${item.codigo || ""}</td>
+            <td style="padding:8px 10px;">${item.nombre || ""}</td>
+            <td style="padding:8px 10px; text-align:center; font-weight:bold;">${item.cantidad || 0}</td>
+          </tr>
+        `
       )
       .join("");
 
@@ -136,16 +130,16 @@ export async function POST(req: Request) {
       <h2>🚨 NUEVO PEDIDO</h2>
 
       <p><strong>Cliente:</strong> ${cliente}</p>
-      <p><strong>Vendedor:</strong> ${pedido.vendedor}</p>
-
-      <br/>
+      <p><strong>RUT:</strong> ${clienteData?.rut || "-"}</p>
+      <p><strong>Teléfono:</strong> ${clienteData?.telefono || "-"}</p>
+      <p><strong>Vendedor:</strong> ${pedido.vendedor || "-"}</p>
 
       <table border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         <thead>
           <tr>
-            <th>Código</th>
-            <th>Producto</th>
-            <th>Cantidad</th>
+            <th style="padding:8px 10px;">Código</th>
+            <th style="padding:8px 10px;">Producto</th>
+            <th style="padding:8px 10px;">Cantidad</th>
           </tr>
         </thead>
         <tbody>
@@ -161,8 +155,15 @@ export async function POST(req: Request) {
     `;
 
     await resend.emails.send({
+      from: "Pedidos <onboarding@resend.dev>",
+      to: ["vitaflorsociedad@gmail.com"],
+      subject: `Nuevo pedido - ${cliente}`,
+      html: htmlAdmin,
+    });
+
+    await resend.emails.send({
       from: "Depósito <onboarding@resend.dev>",
-      to: ["litiumdeposito@gmail.com"],
+      to: ["vitaflorsociedad@gmail.com"],
       subject: `🚨 NUEVO PEDIDO - ${cliente}`,
       html: htmlDeposito,
     });
